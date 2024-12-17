@@ -1,0 +1,264 @@
+import pexpect
+import difflib
+
+def ssh_connection():
+    # Define SSH variables
+    ip_address = '192.168.56.101'
+    username = 'prne'
+    password = 'cisco123!'
+    password_enable = 'class123!'
+
+    try:
+        # Start SSH session
+        session = pexpect.spawn(f'ssh {username}@{ip_address}', encoding='utf-8', timeout=20)
+        result = session.expect(['Password:', pexpect.TIMEOUT, pexpect.EOF])
+
+        if result != 0:
+            print('--- FAILURE! Unable to establish SSH session.')
+            return session
+
+        # Send password
+        session.sendline(password)
+        result = session.expect(['>', '#', pexpect.TIMEOUT, pexpect.EOF])
+
+        if result != 0 and result != 1:
+            print('--- FAILURE! Incorrect password or no response.')
+            session.close()
+            return None
+
+        # Check if already in enable mode
+        if result == 0:
+            # Enter privileged EXEC mode
+            session.sendline('enable')
+            result = session.expect(['Password:', '#', pexpect.TIMEOUT, pexpect.EOF])
+
+            if result == 0:
+                # Send enable password
+                session.sendline(password_enable)
+                result = session.expect(['#', pexpect.TIMEOUT, pexpect.EOF])
+
+                if result != 0:
+                    print('--- FAILURE! Enable password incorrect.')
+                    session.close()
+                    return None
+            elif result != 1:
+                print('--- FAILURE! Unable to enter enable mode.')
+                session.close()
+                return None
+
+        print('--- Successfully connected via SSH and in privileged EXEC mode.')
+        return session
+
+    except Exception as e:
+        print(f'--- ERROR: {e}')
+        return None
+
+def configure_interfaces(session):
+    try:
+        # Enter global configuration mode
+        session.sendline('configure terminal')
+        session.expect([r'\(config\)#', pexpect.TIMEOUT])
+
+        # Configure loopback interface
+        session.sendline('interface loopback0')
+        session.expect([r'\(config-if\)#', pexpect.TIMEOUT])
+        session.sendline('ip address 10.0.0.1 255.255.255.0')
+        session.expect([r'\(config-if\)#', pexpect.TIMEOUT])
+        session.sendline('exit')
+        session.expect([r'\(config\)#', pexpect.TIMEOUT])
+        print('--- Configured loopback0 interface with IP 10.0.0.1/24')
+
+        # Configure another interface (e.g., GigabitEthernet0/0)
+        session.sendline('interface GigabitEthernet0/0')
+        session.expect([r'\(config-if\)#', pexpect.TIMEOUT])
+        session.sendline('ip address 192.168.1.1 255.255.255.0')
+        session.expect([r'\(config-if\)#', pexpect.TIMEOUT])
+        session.sendline('no shutdown')
+        session.expect([r'\(config-if\)#', pexpect.TIMEOUT])
+        session.sendline('exit')
+        session.expect([r'\(config\)#', pexpect.TIMEOUT])
+        print('--- Configured GigabitEthernet0/0 with IP 192.168.1.1/24')
+
+        # Exit configuration mode
+        session.sendline('exit')
+        session.expect(['#', pexpect.TIMEOUT])
+
+    except Exception as e:
+        print(f'--- ERROR configuring interfaces: {e}')
+
+def configure_routing(session):
+    try:
+        # Enter global configuration mode
+        session.sendline('configure terminal')
+        session.expect([r'\(config\)#', pexpect.TIMEOUT])
+
+        # Configure RIP routing protocol
+        session.sendline('router rip')
+        session.expect([r'\(config-router\)#', pexpect.TIMEOUT])
+        session.sendline('version 2')
+        session.expect([r'\(config-router\)#', pexpect.TIMEOUT])
+        session.sendline('network 10.0.0.0')
+        session.expect([r'\(config-router\)#', pexpect.TIMEOUT])
+        session.sendline('network 192.168.1.0')
+        session.expect([r'\(config-router\)#', pexpect.TIMEOUT])
+        session.sendline('no auto-summary')
+        session.expect([r'\(config-router\)#', pexpect.TIMEOUT])
+        print('--- Configured RIP routing protocol')
+
+        # Exit router configuration mode
+        session.sendline('exit')
+        session.expect([r'\(config\)#', pexpect.TIMEOUT])
+
+        # Exit global configuration mode
+        session.sendline('exit')
+        session.expect(['#', pexpect.TIMEOUT])
+
+    except Exception as e:
+        print(f'--- ERROR configuring routing protocol: {e}')
+
+def save_running_config():
+
+    try:
+        # Start SSH session
+        session = ssh_connection()
+        if session is None:
+            return
+
+        # Retrieve the running configuration
+        session.sendline('show running-config')
+        session.expect(['#', pexpect.TIMEOUT], timeout=60)  # Adjust timeout for long outputs
+
+        # Save the running configuration locally
+        running_config = session.before  # Captures the output before the prompt
+        with open('running-config.txt', 'w') as file:
+            file.write(running_config)
+
+        print('--- Running configuration saved to running-config.txt')
+
+        # Exit session
+        session.sendline('exit')
+        session.close()
+
+    except Exception as e:
+        print(f'--- ERROR: {e}')
+
+def compare_configs(local_file, remote_config):
+    # Compare local config file with remote config
+    try:
+        with open(local_file, 'r') as file:
+            local_config = file.readlines()
+
+        # Remote configuration is provided as a string
+        remote_config_lines = remote_config.splitlines(keepends=True)
+
+        # Use difflib to compute differences
+        diff = difflib.unified_diff(local_config, remote_config_lines, fromfile='Local Config', tofile='Remote Config', lineterm='')
+
+        print('--- Configuration Differences:')
+        for line in diff:
+            print(line)
+
+    except Exception as e:
+        print(f'--- ERROR comparing configurations: {e}')
+
+def retrieve_startup_config():
+    try:
+        # Start SSH session
+        session = ssh_connection()
+        if session is None:
+            return None
+
+        # Retrieve the startup configuration
+        session.sendline('show startup-config')
+        session.expect(['#', pexpect.TIMEOUT], timeout=60)
+
+        startup_config = session.before
+        session.sendline('exit')
+        session.close()
+
+        return startup_config
+
+    except Exception as e:
+        print(f'--- ERROR: {e}')
+        return None
+
+def telnet_connection():
+    # Define Telnet variables
+    ip_address = '192.168.56.101'
+    username = 'cisco'
+    password = 'cisco123!'
+
+    try:
+        # Start Telnet session
+        session = pexpect.spawn(f'telnet {ip_address}', encoding='utf-8', timeout=20)
+        result = session.expect(['Username:', pexpect.TIMEOUT])
+
+        if result != 0:
+            print('--- FAILURE! Unable to establish Telnet session.')
+            return
+
+        # Send username and password
+        session.sendline(username)
+        session.expect(['Password:', pexpect.TIMEOUT])
+        session.sendline(password)
+        session.expect(['>', '#', pexpect.TIMEOUT])
+
+        # Enter enable mode if not already
+        session.sendline('enable')
+        session.expect(['Password:', '#', pexpect.TIMEOUT])
+        session.sendline(password)
+        session.expect(['#', pexpect.TIMEOUT])
+
+        # Change hostname
+        session.sendline('configure terminal')
+        session.expect([r'\(config\)#', pexpect.TIMEOUT])
+        session.sendline('hostname R1')
+        session.expect([r'R1\(config\)#', pexpect.TIMEOUT])
+
+        print('--- Successfully changed hostname to R1 via Telnet')
+
+        # Exit session
+        session.sendline('exit')
+        session.sendline('exit')
+        session.close()
+
+    except Exception as e:
+        print(f'--- ERROR: {e}')
+
+def main_menu():
+    while True:
+        print("\n--- Connection Menu ---")
+        print("1. SSH Connection and Save Running Config")
+        print("2. Telnet Connection")
+        print("3. Compare Configurations")
+        print("4. Configure Interfaces and Routing")
+        print("5. Exit")
+        choice = input("Choose an option (1/2/3/4/5): ")
+
+        if choice == '1':
+            session = ssh_connection()
+            if session:
+                save_running_config()
+                session.close()
+        elif choice == '2':
+            telnet_connection()
+        elif choice == '3':
+            print("--- Comparing Configurations ---")
+            startup_config = retrieve_startup_config()
+            if startup_config:
+                compare_configs('running-config.txt', startup_config)
+        elif choice == '4':
+            session = ssh_connection()
+            if session:
+                configure_interfaces(session)
+                configure_routing(session)
+                save_running_config()  # Save the updated running config
+                session.close()
+        elif choice == '5':
+            print("Exiting...")
+            break
+        else:
+            print("Invalid choice. Please choose 1, 2, 3, 4, or 5.")
+
+if __name__ == "__main__":
+    main_menu()
